@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, Arial, sans-serif; margin: 0; background: #f2f4f7; color: #1d2433; }
+  header { background: #0b3d91; color: #fff; padding: 14px 16px; font-size: 18px; font-weight: 700; }
+  main { padding: 12px; max-width: 560px; margin: auto; padding-bottom: 80px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tabs button { flex: 1; }
+  button { border: 0; border-radius: 10px; padding: 12px; font-size: 16px; font-weight: 600;
+           background: #e3e8f0; color: #1d2433; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  .prim, .act { background: #0b3d91; color: #fff; }
+  .ok { background: #1e8e3e; color: #fff; }
+  .mal { background: #c5221f; color: #fff; }
+  input { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #c8cfdb; border-radius: 10px; }
+  .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 10px;
+          box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .item { cursor: pointer; }
+  .bajo { border-left: 6px solid #c5221f; }
+  .cod { font-weight: 700; color: #0b3d91; }
+  .muted { color: #667085; font-size: 14px; }
+  .alerta { background: #fde8e8; color: #a50e0e; padding: 8px 10px; border-radius: 8px; font-weight: 600; margin: 8px 0; }
+  .stock { font-size: 36px; font-weight: 800; }
+  .fila { display: flex; gap: 8px; margin-top: 10px; }
+  .fila > * { flex: 1; }
+  .hidden { display: none; }
+  #lector { position: absolute; left: -9999px; width: 300px; height: 300px; }
+  #msg { position: fixed; left: 12px; right: 12px; bottom: 16px; padding: 12px; border-radius: 10px;
+         color: #fff; display: none; text-align: center; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>Inventario Autotechno</header>
+<main>
+  <input type="hidden" id="inicial" value="<?= codigoInicial ?>">
+
+  <div class="tabs">
+    <button id="tBuscar" class="act" onclick="verTab('buscar')">Buscar</button>
+    <button id="tBajo" onclick="verTab('bajo')">Stock bajo <span id="nBajo"></span></button>
+  </div>
+
+  <section id="buscar">
+    <button class="prim" style="width:100%;margin-bottom:10px" onclick="document.getElementById('foto').click()">📷 Escanear QR</button>
+    <input type="file" id="foto" accept="image/*" capture="environment" class="hidden">
+    <input id="q" placeholder="Buscar: código o nombre (ej: codo 8 mm 1/4)" oninput="buscar()">
+    <div id="ficha" style="margin-top:12px"></div>
+    <div id="lista" style="margin-top:12px"><p class="muted">Cargando productos…</p></div>
+  </section>
+
+  <section id="bajo" class="hidden"><div id="listaBajo"></div></section>
+  <div id="lector"></div>
+</main>
+<div id="msg"></div>
+
+<script>
+let productos = [];
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function norm(s) {
+  return String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+function toast(t, error) {
+  const m = document.getElementById('msg');
+  m.textContent = t;
+  m.style.background = error ? '#c5221f' : '#1e8e3e';
+  m.style.display = 'block';
+  clearTimeout(m._t);
+  m._t = setTimeout(() => m.style.display = 'none', 3000);
+}
+function esBajo(p) { return p.stock < p.minimo; }
+
+function itemHTML(p) {
+  return `<div class="card item ${esBajo(p) ? 'bajo' : ''}" onclick="abrir('${esc(p.codigo)}')">
+    <div class="cod">${esc(p.codigo)}</div>
+    <div>${esc(p.nombre)}</div>
+    <div class="muted">Stock: <b>${p.stock}</b> · Mín: ${p.minimo} · ${esc(p.categoria)}</div>
+  </div>`;
+}
+
+function buscar() {
+  document.getElementById('ficha').innerHTML = '';
+  const palabras = norm(document.getElementById('q').value).split(/\s+/).filter(Boolean);
+  const res = productos.filter(p => {
+    const txt = norm(p.codigo + ' ' + p.nombre + ' ' + p.categoria);
+    return palabras.every(w => txt.includes(w));
+  });
+  document.getElementById('lista').innerHTML =
+    res.length ? res.map(itemHTML).join('') : '<p class="muted">Sin resultados</p>';
+}
+
+function abrir(codigo) {
+  const p = productos.find(x => x.codigo.toUpperCase() === String(codigo).trim().toUpperCase());
+  verTab('buscar');
+  if (!p) { toast('Código no encontrado: ' + codigo, true); return; }
+  document.getElementById('lista').innerHTML = '';
+  document.getElementById('q').value = '';
+  const precio = p.precio ? '$' + p.precio.toLocaleString('es-CL') : '—';
+  document.getElementById('ficha').innerHTML = `
+    <div class="card ${esBajo(p) ? 'bajo' : ''}">
+      <div class="cod">${esc(p.codigo)}</div>
+      <div style="font-size:18px;font-weight:600;margin:4px 0">${esc(p.nombre)}</div>
+      <div class="muted">${esc(p.categoria)} · Ubicación: ${esc(p.ubicacion || '—')} · Precio: ${precio}</div>
+      ${esBajo(p) ? '<div class="alerta">⚠️ Stock bajo: reponer</div>' : ''}
+      <div class="muted" style="margin-top:8px">Stock actual</div>
+      <div class="stock">${p.stock}</div>
+      <div class="muted">Mínimo: ${p.minimo}</div>
+      <div class="fila"><input id="cant" type="number" min="1" inputmode="numeric" placeholder="Cantidad"></div>
+      <div class="fila"><input id="nota" placeholder="Nota (opcional): cliente, factura…"></div>
+      <div class="fila">
+        <button class="ok" onclick="mover('${esc(p.codigo)}','entrada', this)">＋ Entrada</button>
+        <button class="mal" onclick="mover('${esc(p.codigo)}','salida', this)">－ Salida</button>
+      </div>
+      <div class="fila"><button onclick="volver()">← Volver a la lista</button></div>
+    </div>`;
+}
+
+function volver() { document.getElementById('q').value = ''; buscar(); }
+
+function mover(codigo, tipo, btn) {
+  const cant = Number(document.getElementById('cant').value);
+  const nota = document.getElementById('nota').value;
+  if (!(cant > 0)) { toast('Escribe una cantidad mayor que 0', true); return; }
+  document.querySelectorAll('#ficha button').forEach(b => b.disabled = true);
+  google.script.run
+    .withSuccessHandler(r => {
+      const p = productos.find(x => x.codigo === codigo);
+      p.stock = r.stock;
+      actualizarBajo();
+      abrir(codigo);
+      toast((tipo === 'entrada' ? 'Entrada' : 'Salida') + ' registrada. Stock: ' + r.stock);
+    })
+    .withFailureHandler(e => {
+      document.querySelectorAll('#ficha button').forEach(b => b.disabled = false);
+      toast(e.message, true);
+    })
+    .registrarMovimiento(codigo, tipo, cant, nota);
+}
+
+function actualizarBajo() {
+  const bajos = productos.filter(esBajo);
+  document.getElementById('nBajo').textContent = bajos.length ? '(' + bajos.length + ')' : '';
+  document.getElementById('listaBajo').innerHTML =
+    bajos.length ? bajos.map(itemHTML).join('') : '<p class="muted">Todo en orden 👍</p>';
+}
+
+function verTab(t) {
+  document.getElementById('buscar').classList.toggle('hidden', t !== 'buscar');
+  document.getElementById('bajo').classList.toggle('hidden', t !== 'bajo');
+  document.getElementById('tBuscar').classList.toggle('act', t === 'buscar');
+  document.getElementById('tBajo').classList.toggle('act', t === 'bajo');
+}
+
+// El QR puede traer solo el código (RNPT-001) o un link con ?code=RNPT-001
+function extraerCodigo(texto) {
+  try { const u = new URL(texto); return u.searchParams.get('code') || texto.trim(); }
+  catch (e) { return texto.trim(); }
+}
+
+document.getElementById('foto').addEventListener('change', e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  toast('Leyendo QR…');
+  new Html5Qrcode('lector').scanFile(f, false)
+    .then(texto => abrir(extraerCodigo(texto)))
+    .catch(() => toast('No se pudo leer el QR. Acércate y que salga nítido.', true));
+});
+
+google.script.run
+  .withSuccessHandler(lista => {
+    productos = lista;
+    actualizarBajo();
+    const ini = document.getElementById('inicial').value;
+    if (ini) abrir(ini); else buscar();
+  })
+  .withFailureHandler(e => {
+    document.getElementById('lista').innerHTML = '<p class="alerta">Error: ' + esc(e.message) + '</p>';
+  })
+  .getProductos();
+</script>
+</body>
+</html>
